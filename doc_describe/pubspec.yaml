@@ -31,19 +31,15 @@ dependencies:
   flutter:
     sdk: flutter
   record: ^6.1.2
-  web_socket_channel: ^3.0.3
-  audioplayers: ^6.5.1
-
-
+  # Removed web_socket_channel - using raw TCP sockets
+  # Removed http - using socket connection instead
+  # Removed audioplayers - not needed for streaming
+  # Removed file_selector - not saving files anymore
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  path_provider: ^2.1.5
-  path: ^1.9.1
-  file_selector: ^1.0.4
   shared_preferences: ^2.5.3
-  http: ^1.5.0
 
 dev_dependencies:
   flutter_test:

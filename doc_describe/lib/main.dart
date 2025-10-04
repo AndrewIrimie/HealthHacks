@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'socket_audio_service.dart';
 
 void main() => runApp(const DocDescribeApp());
 
@@ -35,139 +35,247 @@ class RecordPage extends StatefulWidget {
 
 class _RecordPageState extends State<RecordPage>
     with SingleTickerProviderStateMixin {
+  
+  // Audio recording
   final AudioRecorder _recorder = AudioRecorder();
   bool _isRecording = false;
-  String _status = 'Idle';
-  String? _lastPath;
-
+  StreamSubscription<Uint8List>? _audioStreamSubscription;
+  
+  // Socket communication
+  final SocketAudioService _socketService = SocketAudioService();
+  bool _isConnected = false;
+  
+  // UI state
+  String _status = ConnectionStatus.idle;
   Duration _elapsed = Duration.zero;
   Timer? _timer;
-
   late final AnimationController _pulse;
-
-  // Change this if your server runs elsewhere
-  String _serverUrl = 'http://127.0.0.1:8000/upload';
+  
+  // Connection settings
+  String _serverHost = 'localhost'; // Change to your computer's IP for device testing
+  int _serverPort = 8080;
+  
+  // Statistics
+  int _bytesSent = 0;
+  int _packetsSpent = 0;
 
   @override
   void initState() {
     super.initState();
-    _pulse =
-        AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 1400),
-          lowerBound: 0.9,
-          upperBound: 1.08,
-        )..addStatusListener((s) {
-          if (s == AnimationStatus.completed) _pulse.reverse();
-          if (s == AnimationStatus.dismissed) _pulse.forward();
+    _setupAnimation();
+    _setupSocketService();
+    _loadConnectionSettings();
+  }
+
+  void _setupAnimation() {
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+      lowerBound: 0.9,
+      upperBound: 1.08,
+    )..addStatusListener((s) {
+      if (s == AnimationStatus.completed) _pulse.reverse();
+      if (s == AnimationStatus.dismissed) _pulse.forward();
+    });
+  }
+
+  void _setupSocketService() {
+    _socketService.onStatusUpdate = (status) {
+      if (mounted) setState(() => _status = status);
+    };
+    
+    _socketService.onError = (error) {
+      if (mounted) {
+        setState(() => _status = 'Error: $error');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Socket Error: $error'), backgroundColor: Colors.red),
+        );
+      }
+    };
+    
+    _socketService.onConnected = () {
+      if (mounted) {
+        setState(() {
+          _isConnected = true;
+          _status = ConnectionStatus.connected;
         });
+        _socketService.startHeartbeat();
+      }
+    };
+    
+    _socketService.onDisconnected = () {
+      if (mounted) {
+        setState(() {
+          _isConnected = false;
+          _status = ConnectionStatus.idle;
+        });
+        _socketService.stopHeartbeat();
+      }
+    };
+  }
+
+  Future<void> _loadConnectionSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _serverHost = prefs.getString('server_host') ?? 'localhost';
+      _serverPort = prefs.getInt('server_port') ?? 8080;
+    });
+    _socketService.updateServerSettings(_serverHost, _serverPort);
+  }
+
+  Future<void> _saveConnectionSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('server_host', _serverHost);
+    await prefs.setInt('server_port', _serverPort);
+    _socketService.updateServerSettings(_serverHost, _serverPort);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _pulse.dispose();
+    _audioStreamSubscription?.cancel();
     _recorder.dispose();
+    _socketService.dispose();
     super.dispose();
   }
 
-  Future<Directory> _recordingsDir() async {
-    final base = await getApplicationSupportDirectory(); // safe, sandboxed
-    final dir = Directory(p.join(base.path, 'recordings'));
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
-  }
-
-  Future<void> _toggle() async =>
+  Future<void> _toggleRecording() async =>
       _isRecording ? _stopRecording() : _startRecording();
 
   Future<void> _startRecording() async {
+    // Check microphone permission
     try {
       final hasPerm = await _recorder.hasPermission();
       if (!hasPerm) {
         setState(() => _status = 'Microphone permission denied');
         return;
       }
-    } catch (_) {}
+    } catch (_) {
+      setState(() => _status = 'Permission check failed');
+      return;
+    }
+
+    // Connect to server if not connected
+    if (!_isConnected) {
+      final connected = await _socketService.connect();
+      if (!connected) {
+        return; // Error handling is done in socket service callbacks
+      }
+      // Wait a moment for connection to stabilize
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
 
     try {
-      final dir = await _recordingsDir();
-      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
-      final path = p.join(dir.path, 'docdescribe_$ts.wav');
+      // Start session on server
+      final sessionStarted = _socketService.sendStartSession(metadata: {
+        'audio_format': 'pcm16',
+        'sample_rate': 16000,
+        'channels': 1,
+        'client_info': 'Flutter DocDescribe App',
+      });
 
-      const cfg = RecordConfig(
-        encoder: AudioEncoder.wav, // PCM WAV (macOS-friendly)
-        sampleRate: 16000, // very compatible; change later if you want
-        numChannels: 1,
+      if (!sessionStarted) {
+        setState(() => _status = 'Failed to start session');
+        return;
+      }
+
+      // Configure audio recording for real-time streaming
+      const config = RecordConfig(
+        encoder: AudioEncoder.pcm16bits, // Raw PCM data
+        sampleRate: 16000,               // Match server expectation
+        numChannels: 1,                  // Mono audio
+        autoGain: true,                  // Automatic gain control
+        echoCancel: true,                // Echo cancellation
+        noiseSuppress: true,             // Noise suppression
       );
-      await _recorder.start(cfg, path: path);
+
+      // Start real-time audio stream
+      final audioStream = await _recorder.startStream(config);
+      
+      // Reset statistics
+      _bytesSent = 0;
+      _packetsSpent = 0;
+
+      // Listen to audio stream and send to server
+      _audioStreamSubscription = audioStream.listen(
+        (audioData) {
+          if (_isConnected && _socketService.sendAudioData(audioData)) {
+            _bytesSent += audioData.length;
+            _packetsSpent++;
+          }
+        },
+        onError: (error) {
+          setState(() => _status = 'Audio stream error: $error');
+        },
+      );
 
       setState(() {
         _isRecording = true;
-        _status = 'Recording…';
+        _status = ConnectionStatus.recording;
         _elapsed = Duration.zero;
-        _lastPath = null;
       });
 
+      // Start timer for elapsed time
       _timer?.cancel();
       _timer = Timer.periodic(
         const Duration(seconds: 1),
         (_) => setState(() => _elapsed += const Duration(seconds: 1)),
       );
+      
       _pulse.forward();
+
     } catch (e) {
-      setState(() => _status = 'Failed to start: $e');
+      setState(() => _status = 'Failed to start recording: $e');
     }
   }
 
   Future<void> _stopRecording() async {
     try {
-      final savedPath = await _recorder.stop(); // returns the path
+      // Stop audio recording
+      await _recorder.stop();
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      
+      // Stop timer and animation
       _timer?.cancel();
       _pulse.stop();
 
+      // Send end session to server
+      _socketService.sendEndSession();
+
       setState(() {
         _isRecording = false;
-        _status = 'Saved';
-        _lastPath = savedPath;
+        _status = 'Stopped - Sent ${_formatBytes(_bytesSent)} in $_packetsSpent packets';
       });
 
-      if (savedPath != null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Saved: $savedPath')));
-        await _uploadFile(savedPath);
+      // Show completion message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Recording sent: ${_formatBytes(_bytesSent)} in ${_fmt(_elapsed)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
+
     } catch (e) {
       setState(() => _status = 'Failed to stop: $e');
     }
   }
 
-  Future<void> _uploadFile(String path) async {
-    try {
-      setState(() => _status = 'Uploading to backend…');
-      final uri = Uri.parse(_serverUrl);
-      final req = http.MultipartRequest('POST', uri)
-        ..files.add(await http.MultipartFile.fromPath('file', path));
-      final resp = await req.send();
-      final body = await resp.stream.bytesToString();
-
-      if (!mounted) return;
-      if (resp.statusCode == 200) {
-        setState(
-          () => _status =
-              'Backend OK: ${body.substring(0, body.length.clamp(0, 120))}…',
-        );
-      } else {
-        setState(
-          () => _status =
-              'Upload failed: ${resp.statusCode} ${resp.reasonPhrase}',
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = 'Upload error: $e');
+  Future<void> _toggleConnection() async {
+    if (_isConnected) {
+      await _socketService.disconnect();
+    } else {
+      await _socketService.connect();
     }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   String _fmt(Duration d) {
@@ -181,52 +289,123 @@ class _RecordPageState extends State<RecordPage>
     final isRec = _isRecording;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Doc Describe'), centerTitle: true),
-      body: Center(
+      appBar: AppBar(
+        title: const Text('Doc Describe'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: Icon(_isConnected ? Icons.wifi : Icons.wifi_off),
+            onPressed: _toggleConnection,
+            tooltip: _isConnected ? 'Disconnect' : 'Connect',
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // (Optional) quick server URL field; comment this block out if you want hardcoded URL only
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
-              child: TextField(
-                controller: TextEditingController(text: _serverUrl),
-                onChanged: (v) => _serverUrl = v,
-                decoration: const InputDecoration(
-                  labelText: 'Backend upload URL',
-                  hintText: 'http://127.0.0.1:8000/upload',
-                  border: OutlineInputBorder(),
+            // Connection Settings
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Server Connection',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: TextField(
+                            controller: TextEditingController(text: _serverHost),
+                            onChanged: (v) => _serverHost = v,
+                            onSubmitted: (_) => _saveConnectionSettings(),
+                            decoration: const InputDecoration(
+                              labelText: 'Server Host',
+                              hintText: 'localhost or IP address',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: TextEditingController(text: _serverPort.toString()),
+                            onChanged: (v) => _serverPort = int.tryParse(v) ?? 8080,
+                            onSubmitted: (_) => _saveConnectionSettings(),
+                            decoration: const InputDecoration(
+                              labelText: 'Port',
+                              hintText: '8080',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Status: ${_socketService.connectionInfo}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 16),
-
-            // Status chip
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: isRec ? Colors.red.withOpacity(0.12) : Colors.white10,
-                border: Border.all(
-                  color: isRec ? Colors.redAccent : Colors.white24,
-                ),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                isRec ? 'Recording… ${_fmt(_elapsed)}' : _status,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: isRec ? Colors.redAccent : Colors.white70,
-                ),
-              ),
-            ),
+            
             const SizedBox(height: 24),
 
-            // Single Record/Stop button
+            // Status Display
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: isRec ? Colors.red.withOpacity(0.12) : 
+                       _isConnected ? Colors.green.withOpacity(0.12) : Colors.white10,
+                border: Border.all(
+                  color: isRec ? Colors.redAccent : 
+                         _isConnected ? Colors.greenAccent : Colors.white24,
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    isRec ? 'Recording & Streaming ${_fmt(_elapsed)}' : _status,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isRec ? Colors.redAccent : 
+                             _isConnected ? Colors.greenAccent : Colors.white70,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (isRec) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_formatBytes(_bytesSent)} sent in $_packetsSpent packets',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white60,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 32),
+
+            // Record Button
             ScaleTransition(
               scale: _pulse,
               child: SizedBox(
-                width: 180,
-                height: 180,
+                width: 200,
+                height: 200,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
@@ -235,14 +414,16 @@ class _RecordPageState extends State<RecordPage>
                       end: Alignment.bottomRight,
                       colors: isRec
                           ? [Colors.red.shade400, Colors.red.shade700]
-                          : [Colors.indigo.shade400, Colors.indigo.shade700],
+                          : _isConnected
+                              ? [Colors.indigo.shade400, Colors.indigo.shade700]
+                              : [Colors.grey.shade600, Colors.grey.shade800],
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: (isRec ? Colors.red : Colors.indigo).withOpacity(
-                          0.45,
-                        ),
-                        blurRadius: 28,
+                        color: (isRec ? Colors.red : 
+                               _isConnected ? Colors.indigo : Colors.grey)
+                            .withOpacity(0.45),
+                        blurRadius: 32,
                         spreadRadius: 2,
                       ),
                     ],
@@ -251,23 +432,24 @@ class _RecordPageState extends State<RecordPage>
                     color: Colors.transparent,
                     child: InkWell(
                       customBorder: const CircleBorder(),
-                      onTap: _toggle,
+                      onTap: _isConnected ? _toggleRecording : null,
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             isRec ? Icons.stop_rounded : Icons.mic_rounded,
-                            size: 58,
-                            color: Colors.white,
+                            size: 64,
+                            color: _isConnected ? Colors.white : Colors.white54,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
                           Text(
-                            isRec ? 'Stop' : 'Record',
-                            style: const TextStyle(
-                              fontSize: 20,
+                            isRec ? 'Stop' : 
+                            _isConnected ? 'Record' : 'Connect First',
+                            style: TextStyle(
+                              fontSize: 22,
                               fontWeight: FontWeight.w700,
                               letterSpacing: 0.5,
-                              color: Colors.white,
+                              color: _isConnected ? Colors.white : Colors.white54,
                             ),
                           ),
                         ],
@@ -278,14 +460,31 @@ class _RecordPageState extends State<RecordPage>
               ),
             ),
 
-            if (_lastPath != null) ...[
-              const SizedBox(height: 16),
-              Text(
-                'Saved to:\n$_lastPath',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
+            const SizedBox(height: 32),
+
+            // Help Text
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Quick Setup',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '1. Start the Python server: python main.py --mobile-only\n'
+                      '2. Update the server host to your computer\'s IP address\n'
+                      '3. Tap the connection icon to connect\n'
+                      '4. Press Record to start real-time audio streaming',
+                      style: TextStyle(fontSize: 12, color: Colors.white70),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ],
         ),
       ),
