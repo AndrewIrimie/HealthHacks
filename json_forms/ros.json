@@ -1,0 +1,61 @@
+{
+    "Field 1": { "Description": "Constitutional – Fever", "ResponseType": "Boolean" },
+    "Field 2": { "Description": "Constitutional – Chills", "ResponseType": "Boolean" },
+    "Field 3": { "Description": "Constitutional – Headache", "ResponseType": "Boolean" },
+    "Field 4": { "Description": "Constitutional – Recent weight change: < 20 lbs", "ResponseType": "Boolean" },
+    "Field 5": { "Description": "Constitutional – Recent weight change: > 20 lbs", "ResponseType": "Boolean" },
+    "Field 6": { "Description": "Constitutional – Other", "ResponseType": "Boolean" },
+  
+    "Field 7": { "Description": "Eyes/Nose/Throat – Glaucoma", "ResponseType": "Boolean" },
+    "Field 8": { "Description": "Eyes/Nose/Throat – Glasses", "ResponseType": "Boolean" },
+    "Field 9": { "Description": "Eyes/Nose/Throat – Sinus Problems", "ResponseType": "Boolean" },
+    "Field 10": { "Description": "Eyes/Nose/Throat – Other", "ResponseType": "Boolean" },
+  
+    "Field 11": { "Description": "Cardiovascular – Chest Pain", "ResponseType": "Boolean" },
+    "Field 12": { "Description": "Cardiovascular – Varicose Veins", "ResponseType": "Boolean" },
+    "Field 13": { "Description": "Cardiovascular – High Blood Pressure", "ResponseType": "Boolean" },
+    "Field 14": { "Description": "Cardiovascular – Other", "ResponseType": "Boolean" },
+  
+    "Field 15": { "Description": "Respiratory – Wheezing/Asthma", "ResponseType": "Boolean" },
+    "Field 16": { "Description": "Respiratory – COPD", "ResponseType": "Boolean" },
+    "Field 17": { "Description": "Respiratory – Shortness of Breath", "ResponseType": "Boolean" },
+    "Field 18": { "Description": "Respiratory – Sleep Apnea", "ResponseType": "Boolean" },
+    "Field 19": { "Description": "Respiratory – Other", "ResponseType": "Boolean" },
+  
+    "Field 20": { "Description": "Endocrine – Diabetes", "ResponseType": "Boolean" },
+    "Field 21": { "Description": "Endocrine – Thyroid Disorder", "ResponseType": "Boolean" },
+    "Field 22": { "Description": "Endocrine – Other", "ResponseType": "Boolean" },
+  
+    "Field 23": { "Description": "Musculoskeletal – Joint Pain", "ResponseType": "Boolean" },
+    "Field 24": { "Description": "Musculoskeletal – Neck Pain", "ResponseType": "Boolean" },
+    "Field 25": { "Description": "Musculoskeletal – Back Pain", "ResponseType": "Boolean" },
+    "Field 26": { "Description": "Musculoskeletal – Other", "ResponseType": "Boolean" },
+  
+    "Field 27": { "Description": "Gastrointestinal – Abdominal Pain", "ResponseType": "Boolean" },
+    "Field 28": { "Description": "Gastrointestinal – Constipation", "ResponseType": "Boolean" },
+    "Field 29": { "Description": "Gastrointestinal – Diarrhea", "ResponseType": "Boolean" },
+    "Field 30": { "Description": "Gastrointestinal – Nausea/Vomiting", "ResponseType": "Boolean" },
+    "Field 31": { "Description": "Gastrointestinal – Indigestion/Heartburn", "ResponseType": "Boolean" },
+    "Field 32": { "Description": "Gastrointestinal – Other", "ResponseType": "Boolean" },
+  
+    "Field 33": { "Description": "Hematology – Bleed", "ResponseType": "Boolean" },
+    "Field 34": { "Description": "Hematology – Bruise", "ResponseType": "Boolean" },
+    "Field 35": { "Description": "Hematology – Aspirin Last 2 Weeks", "ResponseType": "Boolean" },
+    "Field 36": { "Description": "Hematology – Other", "ResponseType": "Boolean" },
+  
+    "Field 37": { "Description": "Neurologic – Tremors", "ResponseType": "Boolean" },
+    "Field 38": { "Description": "Neurologic – Dizzy Spells", "ResponseType": "Boolean" },
+    "Field 39": { "Description": "Neurologic – Numbness/Tingling", "ResponseType": "Boolean" },
+    "Field 40": { "Description": "Neurologic – Other", "ResponseType": "Boolean" },
+  
+    "Field 41": { "Description": "Genitourinary – Urinary Frequency", "ResponseType": "Boolean" },
+    "Field 42": { "Description": "Genitourinary – Urinary Retention", "ResponseType": "Boolean" },
+    "Field 43": { "Description": "Genitourinary – Painful Urination", "ResponseType": "Boolean" },
+    "Field 44": { "Description": "Genitourinary – Blood in Urine", "ResponseType": "Boolean" },
+    "Field 45": { "Description": "Genitourinary – Other", "ResponseType": "Boolean" },
+  
+    "Field 46": { "Description": "Psychologic – Anxiety", "ResponseType": "Boolean" },
+    "Field 47": { "Description": "Psychologic – Depression", "ResponseType": "Boolean" },
+    "Field 48": { "Description": "Psychologic – Other", "ResponseType": "Boolean" }
+  }
+  
