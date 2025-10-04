@@ -1,0 +1,7 @@
+pipecat-ai
+sounddevice 
+webrtcvad 
+transformers 
+accelerate 
+safetensors
+torch
