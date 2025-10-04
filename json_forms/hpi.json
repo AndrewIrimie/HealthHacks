@@ -1,0 +1,30 @@
+{
+    "Field 1": {
+        "Description": "Chief complaint / Reason for consult",
+        "ResponseType": "Text"
+    },
+    "Field 2": {
+        "Description": "History of present illness",
+        "ResponseType": "Text"
+    },
+    "Field 3": {
+        "Description": "Past medical/surgery history",
+        "ResponseType": "Text"
+    },
+    "Field 4": {
+        "Description": "Allergies",
+        "ResponseType": "Text"
+    },
+    "Field 5": {
+        "Description": "Medications and Dosages",
+        "ResponseType": "Text"
+    },
+    "Field 6": {
+        "Description": "Social history",
+        "ResponseType": "Text"
+    },
+    "Field 7": {
+        "Description": "Family history",
+        "ResponseType": "Text"
+    }
+}

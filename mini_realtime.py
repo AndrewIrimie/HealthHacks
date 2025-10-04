@@ -1,72 +1,121 @@
-# file: stt_to_llm_local.py
+# mini_realtime.py
 import asyncio
-from pipecat.audio.devices import Microphone
-from pipecat.runtime import Pipeline, Event, on
+from loguru import logger
+import aiohttp
+import os
+
+# --- Pipecat core ---
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.task import PipelineTask
+from pipecat.pipeline.runner import PipelineRunner
+
+# Local audio I/O (mic + speakers)
+from pipecat.transports.local.audio import (
+    LocalAudioTransport, LocalAudioTransportParams
+)
+
+# Frames (STT out / TTS in / start)
+from pipecat.frames.frames import (
+    StartFrame,
+    InterimTranscriptionFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,   # text we want TTS to speak
+)
+
+# STT: Ultravox (runs locally; see docs for model setup)
 from pipecat.services.ultravox.stt import UltravoxSTTService
 
-# ---- Local LLM (Transformers) ----
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextGenerationPipeline, pipeline
+# TTS: Piper over HTTP (you run a local Piper HTTP server)
+from pipecat.services.piper.tts import PiperTTSService
 
-# Load a small local instruct model you have (replace with your local path or HF id).
-# Examples: "TheBloke/Mistral-7B-Instruct-v0.2-GPTQ" (GPU) or a small 3B–8B instruct model.
-LLM_ID = "/path/to/your/local-instruct-model"   # or "meta-llama/Llama-3.1-8B-Instruct"
-tokenizer = AutoTokenizer.from_pretrained(LLM_ID, use_fast=True)
-model = AutoModelForCausalLM.from_pretrained(
-    LLM_ID,
-    torch_dtype="auto",
-    device_map="auto"   # CPU or GPU; adjust to your hardware
-)
-llm: TextGenerationPipeline = pipeline(
-    "text-generation",
-    model=model,
-    tokenizer=tokenizer,
-    max_new_tokens=256,
-    temperature=0.2,
-    do_sample=False
-)
 
-SYSTEM_PROMPT = (
-    "You are a concise reasoning assistant. "
-    "Given the user's last utterance, think briefly and reply with a clear, helpful answer."
-)
+# ---------- Simple “assistant” logic ----------
+def make_reply(user_text: str) -> str:
+    """
+    Keep this stupid-simple for now: parrot back with a tiny flourish.
+    Swap this out for your LLM later.
+    """
+    user_text = user_text.strip()
+    if not user_text:
+        return "I didn't quite catch that. Please try again."
+    if user_text.endswith("?"):
+        return f"You asked: {user_text}"
+    return f"You said: {user_text}"
 
-# ---- Pipecat STT (Ultravox local) + Mic ----
-mic = Microphone(sample_rate=16000, channels=1)
-stt = UltravoxSTTService(   # runs Ultravox locally; no external API
-    sample_rate=16000,
-    enable_interim=False,   # set True if you want partials; we'll use finalized segments
-)
-
-pipeline = Pipeline(sources=[mic], stages=[stt])
-
-@on(pipeline, Event.TRANSCRIPT)  # fired when STT yields a transcript segment
-async def handle_transcript(evt: Event):
-    text = evt.data.get("text", "").strip()
-    is_final = evt.data.get("final", True)
-    if not text:
-        return
-    if not is_final:
-        # if you enabled interim, you could show partials here
-        return
-
-    print(f"\n[User]: {text}")
-
-    prompt = f"{SYSTEM_PROMPT}\n\nUser: {text}\nAssistant:"
-    out = llm(prompt)[0]["generated_text"]
-    # Some models echo the prompt; strip it:
-    reply = out.split("Assistant:")[-1].strip()
-    print(f"[LLM ]: {reply}\n")
 
 async def main():
-    async with pipeline:
-        print("🎙️  Speak into the mic. Ctrl+C to stop.")
-        await pipeline.start()
-        # keep running until interrupted
-        while True:
-            await asyncio.sleep(1)
+    # ----------- config -----------
+    # Piper HTTP server base URL; set PIPER_URL if yours differs
+    piper_url = os.environ.get("PIPER_URL", "http://localhost:5002")
+    # Sample rates:
+    # - Ultravox STT prefers 16000 Hz mic input
+    # - Piper voice models vary; 22050 is a common default
+    audio_in_sr = 16000
+    audio_out_sr = int(os.environ.get("AUDIO_OUT_SR", "22050"))
 
-if __name__ == "__main__":
+    # ----------- local audio -----------
+    transport = LocalAudioTransport(LocalAudioTransportParams())
+
+    # ----------- STT (Ultravox) -----------
+    stt = UltravoxSTTService(
+        sample_rate=audio_in_sr,
+        enable_interim=True,  # change to False if you don't want live partials
+    )
+
+    # ----------- TTS (Piper over HTTP) -----------
+    # PiperTTSService needs an aiohttp session
+    session = aiohttp.ClientSession()
+    tts = PiperTTSService(base_url=piper_url, aiohttp_session=session)
+    # NOTE: Voice/language is chosen by your Piper server config.
+    # If your server lets you select a voice via query params, configure it there.
+
+    # ----------- pipeline -----------
+    # Order matters: mic input -> STT -> TTS -> speaker output
+    pipeline = Pipeline([
+        transport.input(),
+        stt,
+        tts,
+        transport.output(),  # plays TTSAudioRawFrame out the speakers
+    ])
+
+    task = PipelineTask(pipeline)
+    runner = PipelineRunner()
+
+    # ----------- events -----------
+    @task.event_handler("on_frame_reached_downstream")
+    async def on_frames(_task, frame):
+        # show partials quietly
+        if isinstance(frame, InterimTranscriptionFrame):
+            logger.debug(f"[interim] {frame.text}")
+            return
+
+        # when we get a final transcript, synthesize a spoken reply
+        if isinstance(frame, TranscriptionFrame):
+            text = (frame.text or "").strip()
+            if not text:
+                return
+            logger.info(f"[final] {text}")
+
+            reply = make_reply(text)
+            logger.info(f"[bot  ] {reply}")
+
+            # Send text to TTS (Piper) → audio frames → transport.output()
+            await task.queue_frame(TTSSpeakFrame(reply))
+
+    # Kick off with audio format details
+    await task.queue_frame(StartFrame(
+        audio_in_sample_rate=audio_in_sr,
+        audio_out_sample_rate=audio_out_sr
+    ))
+
+    logger.info("🎙️ Speak into your mic. I will talk back. Press Ctrl+C to quit.")
     try:
-        asyncio.run(main())
+        await runner.run(task)
     except KeyboardInterrupt:
         pass
+    finally:
+        await session.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
