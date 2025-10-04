@@ -168,7 +168,7 @@ class _RecordPageState extends State<RecordPage>
 
     try {
       // Start session on server
-      final sessionStarted = _socketService.sendStartSession(metadata: {
+      final sessionStarted = await _socketService.sendStartSession(metadata: {
         'audio_format': 'pcm16',
         'sample_rate': 16000,
         'channels': 1,
