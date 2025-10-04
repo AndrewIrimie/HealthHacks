@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
+//flutter run -d macos
 void main() => runApp(const DocDescribeApp());
 
 class DocDescribeApp extends StatelessWidget {
@@ -46,7 +47,7 @@ class _RecordPageState extends State<RecordPage>
   late final AnimationController _pulse;
 
   // Change this if your server runs elsewhere
-  String _serverUrl = 'http://127.0.0.1:8000/upload';
+  String _serverUrl = 'http://127.0.0.1:8080/upload';
 
   @override
   void initState() {
@@ -194,7 +195,7 @@ class _RecordPageState extends State<RecordPage>
                 onChanged: (v) => _serverUrl = v,
                 decoration: const InputDecoration(
                   labelText: 'Backend upload URL',
-                  hintText: 'http://127.0.0.1:8000/upload',
+                  hintText: 'http://127.0.0.1:8080/upload',
                   border: OutlineInputBorder(),
                 ),
               ),
