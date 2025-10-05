@@ -115,7 +115,7 @@ class SocketAudioService {
   }
   
   /// Send session start message
-  bool sendStartSession({Map<String, dynamic>? metadata}) async {
+  Future<bool> sendStartSession({Map<String, dynamic>? metadata}) async {
     final sessionData = metadata ?? {
       'client_type': 'flutter',
       'version': '1.0',
