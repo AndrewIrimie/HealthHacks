@@ -31,6 +31,8 @@ dependencies:
   flutter:
     sdk: flutter
   record: ^6.1.2
+  path_provider: ^2.1.0
+  http: ^1.2.1
   # Removed web_socket_channel - using raw TCP sockets
   # Removed http - using socket connection instead
   # Removed audioplayers - not needed for streaming
